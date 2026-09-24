@@ -93,6 +93,7 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 </main>
 
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
@@ -195,9 +196,32 @@ window.showBarcodeByIndex=i=>showBarcode(products[i]);
 window.loadP=i=>{let p=products[i];editingId=p.id;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;$('saveBtn').textContent='💾 Guardar cambios';tab('inv');scrollTo({top:0,behavior:'smooth'})};
 window.delP=async i=>{if(!confirm('¿Eliminar este producto?'))return;try{await import('https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js').then(async m=>m.deleteDoc(doc(db,'products',products[i].id)));closeBarcode()}catch(e){alert('No se pudo eliminar: '+e.message)}};
 
-const CODE128B=['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
-function renderCode128(text){let codes=[104];for(const ch of String(text)){let n=ch.charCodeAt(0)-32;if(n<0||n>95)throw new Error('Código no compatible');codes.push(n)}let sum=104;for(let i=1;i<codes.length;i++)sum+=codes[i]*i;codes.push(sum%103,106);let bits=codes.map(c=>CODE128B[c]).join(''),module=3,h=100,quiet=24,width=quiet*2+bits.length*module,rects='',x=quiet;for(let i=0;i<bits.length;){let bit=bits[i],j=i;while(j<bits.length&&bits[j]===bit)j++;if(bit==='1')rects+=`<rect x="${x}" y="0" width="${(j-i)*module}" height="${h}" fill="#000"/>`;x+=(j-i)*module;i=j}$('barcodeSvg').setAttribute('viewBox',`0 0 ${width} ${h}`);$('barcodeSvg').setAttribute('width',width);$('barcodeSvg').setAttribute('height',h);$('barcodeSvg').innerHTML=rects+`<text x="${width/2}" y="${h+24}" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700">${esc(text)}</text>`}
-function showBarcode(p){if(!p)return;$('barcodeCard').classList.remove('hidden');$('barcodeLabel').textContent=p.name+' — '+p.code;try{renderCode128(p.code)}catch(e){alert('No se pudo generar el código de barras.');return}$('barcodeCard').scrollIntoView({behavior:'smooth'})}
+function showBarcode(p){
+  if(!p)return;
+  $('barcodeCard').classList.remove('hidden');
+  $('barcodeLabel').textContent=p.name+' — '+p.code;
+  if(!window.JsBarcode){
+    alert('No se pudo cargar el generador de códigos. Revisa que el dispositivo tenga internet.');
+    return;
+  }
+  try{
+    JsBarcode('#barcodeSvg',String(p.code),{
+      format:'CODE128',
+      displayValue:true,
+      lineColor:'#000',
+      background:'#fff',
+      width:3,
+      height:100,
+      fontSize:18,
+      margin:16,
+      textMargin:8
+    });
+  }catch(e){
+    alert('No se pudo generar el código de barras: '+e.message);
+    return;
+  }
+  $('barcodeCard').scrollIntoView({behavior:'smooth'});
+}
 window.showBarcode=showBarcode;
 window.closeBarcode=()=>$('barcodeCard').classList.add('hidden');
 window.printBarcode=()=>{const svg=$('barcodeSvg').outerHTML,label=$('barcodeLabel').textContent,w=window.open('','_blank','width=500,height=400');if(!w)return;w.document.write('<!doctype html><html><head><title>Código de barras - Hilando</title><style>body{font-family:Arial;text-align:center;padding:30px}svg{max-width:100%}h3{margin-top:10px}</style></head><body>'+svg+'<h3>'+esc(label)+'</h3><script>window.onload=()=>window.print()<\\/script></body></html>');w.document.close()};
@@ -222,7 +246,7 @@ async function checkout(method){
 }
 window.checkout=checkout;
 
-async function startScanner(){if(!window.Html5Qrcode)return alert('No se pudo cargar el lector de cámara.');$('readerWrap').classList.remove('hidden');scanner=new Html5Qrcode('reader');try{await scanner.start({facingMode:'environment'},{fps:12,qrbox:{width:320,height:180},formatsToSupport:[Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.CODE_39]},decoded=>{add(String(decoded).trim());stopScanner()},()=>{})}catch(e){$('readerWrap').classList.add('hidden');alert('No se pudo abrir la cámara. Revisa el permiso y que el sitio use HTTPS.')}}
+async function startScanner(){if(!window.Html5Qrcode)return alert('No se pudo cargar el lector de cámara.');$('readerWrap').classList.remove('hidden');scanner=new Html5Qrcode('reader');try{await scanner.start({facingMode:'environment'},{fps:12,qrbox:{width:320,height:180}},decoded=>{add(decoded);stopScanner()},()=>{})}catch(e){$('readerWrap').classList.add('hidden');alert('No se pudo abrir la cámara. Revisa el permiso y que el sitio use HTTPS.')}}
 async function stopScanner(){if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}$('readerWrap').classList.add('hidden')};window.startScanner=startScanner;window.stopScanner=stopScanner;
 $('manualCode').addEventListener('keydown',e=>{if(e.key==='Enter'){add(e.target.value.trim());e.target.value=''}});
 
