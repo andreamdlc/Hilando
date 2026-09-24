@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e88bb4">
+<title>Hilando POS</title>
+<style>
+:root{--pink:#e88bb4;--light:#fff5f9;--ink:#2d2428;--line:#eadde3;--ok:#36a269;--red:#d9534f}
+*{box-sizing:border-box}body{margin:0;background:var(--light);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{background:var(--pink);color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:22px}header small{opacity:.9}
+nav{display:flex;gap:7px;padding:9px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:57px;z-index:9}
+nav button{flex:1;border:0;border-radius:10px;padding:11px;background:#f3e9ee;font-weight:800;color:var(--ink)}
+nav button.active{background:var(--pink);color:#fff}
+main{max-width:900px;margin:auto;padding:14px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px;margin-bottom:13px}
+h2{font-size:19px;margin:0 0 12px}label{display:block;font-size:13px;font-weight:700;margin:7px 0 4px}
+input,button,select{font:inherit}input{width:100%;padding:12px;border:1px solid #d8cbd1;border-radius:10px}
+button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;font-weight:900}
+.camera{background:var(--pink);color:#fff;font-size:18px}.secondary{background:#f0e6eb;border:0;border-radius:10px;padding:11px;font-weight:800}.success{background:var(--ok);color:#fff;border:0;border-radius:10px;padding:13px;font-weight:900}.danger{background:var(--red);color:#fff;border:0;border-radius:10px;padding:10px;font-weight:800}
+.manual{margin-top:10px}.muted{color:#806f77}.total{text-align:right;font-size:28px;font-weight:950;margin:14px 0}
+.cartrow,.prodrow{display:flex;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid #eee;align-items:center}.cartrow:last-child,.prodrow:last-child{border:0}
+.qty{display:flex;align-items:center;gap:7px}.qty button{width:32px;height:32px;border:0;border-radius:8px;background:#f0e5ea;font-size:18px}
+.actions{display:flex;gap:7px}.actions button{padding:8px 10px;border:0;border-radius:9px}
+.pay{display:grid;grid-template-columns:1fr 1fr;gap:9px}.hidden{display:none!important}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px}.stat b{display:block;font-size:23px;margin-top:4px}
+#readerWrap{margin-top:12px;border-radius:14px;overflow:hidden;background:#111;position:relative}#reader{width:100%;min-height:250px}
+#reader video{width:100%!important;display:block}.hint{text-align:center;padding:9px;color:#fff;background:#222;font-size:13px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:9px}.row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
+.empty{text-align:center;padding:20px;color:#806f77}
+@media(max-width:650px){.row,.row4{grid-template-columns:1fr 1fr}.prodrow{align-items:flex-start;flex-direction:column}.actions{width:100%}.actions button{flex:1}}
+</style>
+</head>
+<body>
+<header><div><h1>🐶 HILANDO</h1><small>Punto de venta</small></div><small id="clock"></small></header>
+<nav>
+<button id="nSale" class="active" onclick="tab('sale')">🛒 Vender</button>
+<button id="nInv" onclick="tab('inv')">📦 Inventario</button>
+<button id="nSum" onclick="tab('sum')">📊 Resumen</button>
+</nav>
+
+<main>
+<section id="sale">
+<div class="card">
+<h2>Escanear producto</h2>
+<button class="big camera" onclick="startScanner()">📷 Escanear con cámara</button>
+<div id="readerWrap" class="hidden">
+  <div id="reader"></div>
+  <div class="hint">Apunta al código de barras. Se cerrará al detectarlo.</div>
+  <button class="big" style="border-radius:0;background:#222;color:#fff" onclick="stopScanner()">Cerrar cámara</button>
+</div>
+<div class="manual">
+<input id="manualCode" placeholder="O escribe / usa lector físico y presiona Enter" autocomplete="off">
+</div>
+</div>
+<div class="card"><h2>Venta actual</h2><div id="cart"></div><div class="total">Total: $<span id="total">0.00</span></div>
+<div class="pay"><button class="success" onclick="checkout('Efectivo')">💵 Cobrar efectivo</button><button class="camera" onclick="checkout('Transferencia')">📱 Cobrar transferencia</button></div></div>
+</section>
+
+<section id="inv" class="hidden">
+<div class="card"><h2>📦 Agregar producto</h2>
+<div class="row4">
+<div><label>Código</label><input id="code" placeholder="100001"></div>
+<div><label>Nombre</label><input id="name" placeholder="Producto"></div>
+<div><label>Precio</label><input id="price" type="number" min="0" step=".01" placeholder="70"></div>
+<div><label>Stock</label><input id="stock" type="number" min="0" step="1" placeholder="10"></div>
+</div>
+<button class="big camera" style="margin-top:10px" onclick="saveProduct()">+ Guardar producto</button>
+<p class="muted">El código puede ser uno que tú elijas. También puedes usar códigos de barras que ya tengas.</p>
+</div>
+<div class="card"><h2>Productos</h2><div id="products"></div></div>
+</section>
+
+<section id="sum" class="hidden">
+<div class="stats">
+<div class="stat">💰 Vendido<b>$<span id="sTotal">0.00</span></b></div>
+<div class="stat">💵 Efectivo<b>$<span id="sCash">0.00</span></b></div>
+<div class="stat">📱 Transferencias<b>$<span id="sTrans">0.00</span></b></div>
+<div class="stat">🛍️ Unidades<b><span id="sItems">0</span></b></div>
+</div>
+<div class="card" style="margin-top:13px"><h2>Ventas</h2><div id="sales"></div></div>
+<div class="card"><button class="secondary" onclick="backup()">⬇️ Respaldar datos</button></div>
+</section>
+</main>
+
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script>
+const PK='hilando_products_v2',SK='hilando_sales_v2';
+let products=JSON.parse(localStorage.getItem(PK)||'[]'), sales=JSON.parse(localStorage.getItem(SK)||'[]'), cart=[], scanner=null;
+const $=id=>document.getElementById(id), money=n=>Number(n).toFixed(2);
+function persist(){localStorage.setItem(PK,JSON.stringify(products));localStorage.setItem(SK,JSON.stringify(sales))}
+function tab(t){['sale','inv','sum'].forEach(x=>$(x).classList.toggle('hidden',x!==t));$('nSale').classList.toggle('active',t==='sale');$('nInv').classList.toggle('active',t==='inv');$('nSum').classList.toggle('active',t==='sum');if(t==='inv')renderProducts();if(t==='sum')renderSummary();if(t==='sale')setTimeout(()=>$('manualCode').focus(),100)}
+$('manualCode').addEventListener('keydown',e=>{if(e.key==='Enter'){add(e.target.value.trim());e.target.value=''}});
+
+async function startScanner(){
+ if(!window.Html5Qrcode){alert('No se pudo cargar el lector de cámara. Abre esta página con internet la primera vez.');return}
+ $('readerWrap').classList.remove('hidden');
+ scanner=new Html5Qrcode("reader");
+ try{
+  await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},(decoded)=>{add(decoded);stopScanner()},()=>{});
+ }catch(e){$('readerWrap').classList.add('hidden');alert('No se pudo abrir la cámara. Revisa el permiso de cámara y que el sitio use HTTPS.')}
+}
+async function stopScanner(){if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}$('readerWrap').classList.add('hidden')}
+
+function add(code){
+ if(!code)return;
+ const p=products.find(x=>String(x.code)===String(code));
+ if(!p){alert('Código no encontrado. Primero agrégalo en Inventario.');return}
+ if(p.stock<1){alert('Producto agotado.');return}
+ let i=cart.find(x=>String(x.code)===String(p.code));
+ if(i){if(i.qty>=p.stock){alert('No hay más stock disponible.');return}i.qty++}else cart.push({code:p.code,name:p.name,price:+p.price,qty:1});
+ renderCart();
+}
+function renderCart(){
+ if(!cart.length){$('cart').innerHTML='<div class="empty">Escanea un producto para comenzar.</div>';$('total').textContent='0.00';return}
+ $('cart').innerHTML=cart.map((x,i)=>`<div class="cartrow"><div><b>${esc(x.name)}</b><br><span class="muted">$${money(x.price)} c/u</span></div><div class="qty"><button onclick="qty(${i},-1)">−</button><b>${x.qty}</b><button onclick="qty(${i},1)">+</button><b>$${money(x.price*x.qty)}</b></div></div>`).join('');
+ $('total').textContent=money(cart.reduce((a,x)=>a+x.price*x.qty,0));
+}
+function qty(i,d){let x=cart[i],p=products.find(p=>p.code===x.code);x.qty+=d;if(x.qty<1)cart.splice(i,1);if(x.qty>p.stock)x.qty=p.stock;renderCart()}
+function checkout(method){
+ if(!cart.length)return alert('No hay productos en la venta.');
+ const total=cart.reduce((a,x)=>a+x.price*x.qty,0);
+ cart.forEach(x=>{let p=products.find(p=>p.code===x.code);p.stock-=x.qty});
+ sales.push({id:Date.now(),date:new Date().toISOString(),method,total,items:cart.map(x=>({...x}))});
+ persist();cart=[];renderCart();alert('Venta registrada: $'+money(total));$('manualCode').focus()
+}
+function saveProduct(){
+ let code=$('code').value.trim(),name=$('name').value.trim(),price=Number($('price').value),stock=Number($('stock').value);
+ if(!code||!name||price<0||stock<0)return alert('Completa todos los campos.');
+ let p=products.find(x=>String(x.code)===code);
+ if(p){p.name=name;p.price=price;p.stock=stock}else products.push({code,name,price,stock});
+ persist();['code','name','price','stock'].forEach(id=>$(id).value='');renderProducts()
+}
+function renderProducts(){
+ $('products').innerHTML=products.length?products.map((p,i)=>`<div class="prodrow"><div><b>${esc(p.name)}</b><br><span class="muted">Código: ${esc(p.code)} · $${money(p.price)} · Stock: ${p.stock}</span></div><div class="actions"><button class="secondary" onclick="loadP(${i})">Editar</button><button class="danger" onclick="delP(${i})">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay productos todavía.</div>'
+}
+function loadP(i){let p=products[i];$('code').value=p.code;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;tab('inv');scrollTo({top:0,behavior:'smooth'})}
+function delP(i){if(confirm('¿Eliminar este producto?')){products.splice(i,1);persist();renderProducts()}}
+function renderSummary(){
+ let total=sales.reduce((a,s)=>a+s.total,0),cash=sales.filter(s=>s.method==='Efectivo').reduce((a,s)=>a+s.total,0),tr=sales.filter(s=>s.method==='Transferencia').reduce((a,s)=>a+s.total,0),items=sales.reduce((a,s)=>a+s.items.reduce((b,x)=>b+x.qty,0),0);
+ $('sTotal').textContent=money(total);$('sCash').textContent=money(cash);$('sTrans').textContent=money(tr);$('sItems').textContent=items;
+ $('sales').innerHTML=sales.length?sales.slice().reverse().map(s=>`<div class="prodrow"><div><b>#${s.id}</b><br><span class="muted">${new Date(s.date).toLocaleString()} · ${s.method}</span></div><b>$${money(s.total)}</b></div>`).join(''):'<div class="empty">Todavía no hay ventas.</div>'
+}
+function backup(){let blob=new Blob([JSON.stringify({products,sales,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='hilando-respaldo.json';a.click();URL.revokeObjectURL(a.href)}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+setInterval(()=>{$('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})},1000);
+renderCart();renderProducts();
+</script>
+</body>
+</html>
