@@ -26,9 +26,9 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px}.stat b{display:block;font-size:23px;margin-top:4px}
 #readerWrap{margin-top:12px;border-radius:14px;overflow:hidden;background:#111;position:relative}#reader{width:100%;min-height:250px}
 #reader video{width:100%!important;display:block}.hint{text-align:center;padding:9px;color:#fff;background:#222;font-size:13px}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:9px}.row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:9px}
 .empty{text-align:center;padding:20px;color:#806f77}
-@media(max-width:650px){.row,.row4{grid-template-columns:1fr 1fr}.prodrow{align-items:flex-start;flex-direction:column}.actions{width:100%}.actions button{flex:1}}
+@media(max-width:650px){.row{grid-template-columns:1fr 1fr}.prodrow{align-items:flex-start;flex-direction:column}.actions{width:100%}.actions button{flex:1}}
 </style>
 </head>
 <body>
@@ -59,16 +59,24 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 
 <section id="inv" class="hidden">
 <div class="card"><h2>📦 Agregar producto</h2>
-<div class="row4">
-<div><label>Código</label><input id="code" placeholder="100001"></div>
+<div class="row">
 <div><label>Nombre</label><input id="name" placeholder="Producto"></div>
 <div><label>Precio</label><input id="price" type="number" min="0" step=".01" placeholder="70"></div>
-<div><label>Stock</label><input id="stock" type="number" min="0" step="1" placeholder="10"></div>
 </div>
-<button class="big camera" style="margin-top:10px" onclick="saveProduct()">+ Guardar producto</button>
-<p class="muted">El código puede ser uno que tú elijas. También puedes usar códigos de barras que ya tengas.</p>
+<div><label>Stock</label><input id="stock" type="number" min="0" step="1" placeholder="10"></div>
+<div style="margin-top:10px;padding:11px;border-radius:10px;background:#fff5f9;border:1px dashed #e88bb4">🏷️ <b>El código de barras se genera automáticamente.</b><br><span class="muted">Tú solo pones nombre, precio y cantidad.</span></div>
+<button id="saveBtn" class="big camera" style="margin-top:10px" onclick="saveProduct()">+ Guardar y generar código</button>
 </div>
 <div class="card"><h2>Productos</h2><div id="products"></div></div>
+<div id="barcodeCard" class="card hidden">
+  <h2>🏷️ Código de barras</h2>
+  <div style="text-align:center;background:#fff;padding:10px">
+    <svg id="barcodeSvg"></svg>
+    <div id="barcodeLabel" style="font-weight:800;margin-top:5px"></div>
+  </div>
+  <button class="big camera" style="margin-top:10px" onclick="printBarcode()">🖨️ Imprimir código</button>
+  <button class="big secondary" style="margin-top:8px" onclick="closeBarcode()">Cerrar</button>
+</div>
 </section>
 
 <section id="sum" class="hidden">
@@ -83,10 +91,26 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 </section>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 <script>
-const PK='hilando_products_v2',SK='hilando_sales_v2';
-let products=JSON.parse(localStorage.getItem(PK)||'[]'), sales=JSON.parse(localStorage.getItem(SK)||'[]'), cart=[], scanner=null;
+const PK='hilando_products_v2',SK='hilando_sales_v2',CK='hilando_next_code_v1';
+let products=JSON.parse(localStorage.getItem(PK)||'[]'), sales=JSON.parse(localStorage.getItem(SK)||'[]'), cart=[], scanner=null, editingIndex=-1;
+function initCodeCounter(){
+ let max=100000;
+ products.forEach(p=>{let n=parseInt(p.code,10);if(Number.isFinite(n)&&n>max)max=n});
+ let next=Number(localStorage.getItem(CK)||0);
+ if(!Number.isInteger(next)||next<=max) next=max+1;
+ localStorage.setItem(CK,String(next));
+}
+function nextCode(){
+ initCodeCounter();
+ let next=Number(localStorage.getItem(CK)||100001);
+ while(products.some(p=>String(p.code)===String(next))) next++;
+ localStorage.setItem(CK,String(next+1));
+ return String(next);
+}
+initCodeCounter();
 const $=id=>document.getElementById(id), money=n=>Number(n).toFixed(2);
 function persist(){localStorage.setItem(PK,JSON.stringify(products));localStorage.setItem(SK,JSON.stringify(sales))}
 function tab(t){['sale','inv','sum'].forEach(x=>$(x).classList.toggle('hidden',x!==t));$('nSale').classList.toggle('active',t==='sale');$('nInv').classList.toggle('active',t==='inv');$('nSum').classList.toggle('active',t==='sum');if(t==='inv')renderProducts();if(t==='sum')renderSummary();if(t==='sale')setTimeout(()=>$('manualCode').focus(),100)}
@@ -125,17 +149,46 @@ function checkout(method){
  persist();cart=[];renderCart();alert('Venta registrada: $'+money(total));$('manualCode').focus()
 }
 function saveProduct(){
- let code=$('code').value.trim(),name=$('name').value.trim(),price=Number($('price').value),stock=Number($('stock').value);
- if(!code||!name||price<0||stock<0)return alert('Completa todos los campos.');
- let p=products.find(x=>String(x.code)===code);
- if(p){p.name=name;p.price=price;p.stock=stock}else products.push({code,name,price,stock});
- persist();['code','name','price','stock'].forEach(id=>$(id).value='');renderProducts()
+ let name=$('name').value.trim(),price=Number($('price').value),stock=Number($('stock').value);
+ if(!name||price<0||stock<0||$('price').value===''||$('stock').value==='')return alert('Completa nombre, precio y stock.');
+ let index=editingIndex;
+ if(index>=0){
+   products[index].name=name;products[index].price=price;products[index].stock=stock;
+ }else{
+   const code=nextCode();
+   products.push({code,name,price,stock});
+   index=products.length-1;
+ }
+ editingIndex=-1;
+ $('name').value='';$('price').value='';$('stock').value='';
+ $('saveBtn').textContent='+ Guardar y generar código';
+ persist();renderProducts();showBarcode(index);
 }
 function renderProducts(){
- $('products').innerHTML=products.length?products.map((p,i)=>`<div class="prodrow"><div><b>${esc(p.name)}</b><br><span class="muted">Código: ${esc(p.code)} · $${money(p.price)} · Stock: ${p.stock}</span></div><div class="actions"><button class="secondary" onclick="loadP(${i})">Editar</button><button class="danger" onclick="delP(${i})">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay productos todavía.</div>'
+ $('products').innerHTML=products.length?products.map((p,i)=>`<div class="prodrow"><div><b>${esc(p.name)}</b><br><span class="muted">Código: ${esc(p.code)} · $${money(p.price)} · Stock: ${p.stock}</span></div><div class="actions"><button class="secondary" onclick="showBarcode(${i})">🏷️ Código</button><button class="secondary" onclick="loadP(${i})">Editar</button><button class="danger" onclick="delP(${i})">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay productos todavía.</div>'
 }
-function loadP(i){let p=products[i];$('code').value=p.code;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;tab('inv');scrollTo({top:0,behavior:'smooth'})}
-function delP(i){if(confirm('¿Eliminar este producto?')){products.splice(i,1);persist();renderProducts()}}
+function showBarcode(i){
+ const p=products[i];
+ $('barcodeCard').classList.remove('hidden');
+ $('barcodeLabel').textContent=p.name+' — '+p.code;
+ if(!window.JsBarcode){alert('No se pudo cargar el generador de códigos. Abre la página con internet la primera vez.');return}
+ JsBarcode('#barcodeSvg',String(p.code),{
+   format:'CODE128',displayValue:true,lineColor:'#000',background:'#fff',
+   width:2,height:80,fontSize:16,margin:10
+ });
+ $('barcodeCard').scrollIntoView({behavior:'smooth'});
+}
+function closeBarcode(){$('barcodeCard').classList.add('hidden')}
+function printBarcode(){
+ const svg=$('barcodeSvg').outerHTML, label=$('barcodeLabel').textContent;
+ const w=window.open('','_blank','width=500,height=400');
+ if(!w){alert('El navegador bloqueó la ventana de impresión. Permítela para imprimir.');return}
+ w.document.write('<!doctype html><html><head><title>Código de barras - Hilando</title><style>body{font-family:Arial;text-align:center;padding:30px}svg{max-width:100%}h3{margin-top:10px}</style></head><body>'+svg+'<h3>'+esc(label)+'</h3><script>window.onload=()=>window.print()<\\/script></body></html>');
+ w.document.close();
+}
+
+function loadP(i){let p=products[i];editingIndex=i;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;$('saveBtn').textContent='💾 Guardar cambios';tab('inv');scrollTo({top:0,behavior:'smooth'})}
+function delP(i){if(confirm('¿Eliminar este producto?')){products.splice(i,1);persist();renderProducts();closeBarcode()}}
 function renderSummary(){
  let total=sales.reduce((a,s)=>a+s.total,0),cash=sales.filter(s=>s.method==='Efectivo').reduce((a,s)=>a+s.total,0),tr=sales.filter(s=>s.method==='Transferencia').reduce((a,s)=>a+s.total,0),items=sales.reduce((a,s)=>a+s.items.reduce((b,x)=>b+x.qty,0),0);
  $('sTotal').textContent=money(total);$('sCash').textContent=money(cash);$('sTrans').textContent=money(tr);$('sItems').textContent=items;
