@@ -40,6 +40,7 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 </nav>
 
 <main>
+<div class="card" style="margin-bottom:13px"><div id="cloudStatus" style="padding:11px;border-radius:10px;border:1px dashed #e88bb4;background:#fff5f9;font-weight:800">☁️ Conectando con la nube...</div><div id="setupHelp" class="hidden" style="margin-top:10px"><b>Falta el paso de conexión.</b><br><span class="muted">Necesitamos conectar Hilando a una base de datos para que computadora, tablet y teléfonos compartan el mismo inventario.</span></div></div>
 <section id="sale">
 <div class="card">
 <h2>Escanear producto</h2>
@@ -87,117 +88,152 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 <div class="stat">🛍️ Unidades<b><span id="sItems">0</span></b></div>
 </div>
 <div class="card" style="margin-top:13px"><h2>Ventas</h2><div id="sales"></div></div>
-<div class="card"><button class="secondary" onclick="backup()">⬇️ Respaldar datos</button></div>
+<div class="card"><button class="secondary" onclick="backup()">⬇️ Respaldar datos</button> <button class="secondary" onclick="importLocal()" style="margin-top:8px">☁️ Pasar datos de este dispositivo a la nube</button></div>
 </section>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-<script>
-const PK='hilando_products_v2',SK='hilando_sales_v2',CK='hilando_next_code_v1';
-let products=JSON.parse(localStorage.getItem(PK)||'[]'), sales=JSON.parse(localStorage.getItem(SK)||'[]'), cart=[], scanner=null, editingIndex=-1;
-function initCodeCounter(){
- let max=100000;
- products.forEach(p=>{let n=parseInt(p.code,10);if(Number.isFinite(n)&&n>max)max=n});
- let next=Number(localStorage.getItem(CK)||0);
- if(!Number.isInteger(next)||next<=max) next=max+1;
- localStorage.setItem(CK,String(next));
-}
-function nextCode(){
- initCodeCounter();
- let next=Number(localStorage.getItem(CK)||100001);
- while(products.some(p=>String(p.code)===String(next))) next++;
- localStorage.setItem(CK,String(next+1));
- return String(next);
-}
-initCodeCounter();
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, onSnapshot, runTransaction, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+
+/* ============================================================
+   HILANDO POS - VERSION NUBE
+   UNA SOLA CONFIGURACION PARA TODOS LOS DISPOSITIVOS.
+   Reemplaza los valores de FIREBASE_CONFIG con los de tu proyecto.
+   ============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "PON_AQUI_API_KEY",
+  authDomain: "PON_AQUI_PROJECT_ID.firebaseapp.com",
+  projectId: "PON_AQUI_PROJECT_ID",
+  storageBucket: "PON_AQUI_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "PON_AQUI_SENDER_ID",
+  appId: "PON_AQUI_APP_ID"
+};
+
+const isConfigured = FIREBASE_CONFIG.apiKey !== "PON_AQUI_API_KEY" && FIREBASE_CONFIG.projectId !== "PON_AQUI_PROJECT_ID";
 const $=id=>document.getElementById(id), money=n=>Number(n).toFixed(2);
-function persist(){localStorage.setItem(PK,JSON.stringify(products));localStorage.setItem(SK,JSON.stringify(sales))}
+let products=[], sales=[], cart=[], scanner=null, editingId=null, db=null, auth=null, currentUser=null, unsubProducts=null, unsubSales=null;
+let localProducts=JSON.parse(localStorage.getItem('hilando_products_v2')||'[]');
+let localSales=JSON.parse(localStorage.getItem('hilando_sales_v2')||'[]');
+
 function tab(t){['sale','inv','sum'].forEach(x=>$(x).classList.toggle('hidden',x!==t));$('nSale').classList.toggle('active',t==='sale');$('nInv').classList.toggle('active',t==='inv');$('nSum').classList.toggle('active',t==='sum');if(t==='inv')renderProducts();if(t==='sum')renderSummary();if(t==='sale')setTimeout(()=>$('manualCode').focus(),100)}
+window.tab=tab;
+
+function showCloudStatus(msg, ok=false){
+  let el=$('cloudStatus'); if(!el)return;
+  el.textContent=msg; el.style.background=ok?'#e9fff3':'#fff5f9'; el.style.borderColor=ok?'#9be0b8':'#e88bb4';
+}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+
+async function startCloud(){
+  if(!isConfigured){
+    showCloudStatus('⚠️ Falta conectar la base de datos. Primero configura Firebase.',false);
+    $('setupHelp').classList.remove('hidden');
+    return;
+  }
+  try{
+    const app=initializeApp(FIREBASE_CONFIG);
+    auth=getAuth(app); db=getFirestore(app);
+    await signInAnonymously(auth);
+    onAuthStateChanged(auth,u=>{currentUser=u});
+    subscribeCloud();
+    showCloudStatus('☁️ Conectado: inventario y ventas se comparten entre dispositivos.',true);
+    $('setupHelp').classList.add('hidden');
+  }catch(e){
+    console.error(e); showCloudStatus('❌ No se pudo conectar a la nube: '+(e.message||e),false); $('setupHelp').classList.remove('hidden');
+  }
+}
+
+function subscribeCloud(){
+  if(unsubProducts)unsubProducts(); if(unsubSales)unsubSales();
+  unsubProducts=onSnapshot(collection(db,'products'),snap=>{
+    products=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+    renderProducts(); renderCart();
+  },err=>{console.error(err);showCloudStatus('❌ Error leyendo inventario: '+err.message,false)});
+  unsubSales=onSnapshot(query(collection(db,'sales'),orderBy('date','desc'),limit(500)),snap=>{
+    sales=snap.docs.map(d=>({id:d.id,...d.data()})); renderSummary();
+  },err=>{console.error(err);showCloudStatus('❌ Error leyendo ventas: '+err.message,false)});
+}
+
+async function nextCodeCloud(){
+  const ref=doc(db,'settings','main');
+  return await runTransaction(db,async tx=>{
+    const snap=await tx.get(ref); let next=100001;
+    if(snap.exists()){const n=Number(snap.data().nextCode);if(Number.isInteger(n)&&n>=100001)next=n}
+    while(products.some(p=>String(p.code)===String(next))) next++;
+    tx.set(ref,{nextCode:next+1},{merge:true}); return String(next);
+  });
+}
+
+async function saveProduct(){
+  if(!db)return alert('Primero conecta la nube.');
+  let name=$('name').value.trim(),price=Number($('price').value),stock=Number($('stock').value);
+  if(!name||price<0||stock<0||$('price').value===''||$('stock').value==='')return alert('Completa nombre, precio y stock.');
+  $('saveBtn').disabled=true;
+  try{
+    let code, id=editingId;
+    if(id){
+      const old=products.find(p=>p.id===id); code=old?.code;
+      await setDoc(doc(db,'products',id),{name,price,stock,code});
+    }else{
+      code=await nextCodeCloud(); id=code;
+      await setDoc(doc(db,'products',id),{name,price,stock,code});
+    }
+    editingId=null; $('name').value='';$('price').value='';$('stock').value='';$('saveBtn').textContent='+ Guardar y generar código';
+    showBarcode({name,code});
+  }catch(e){alert('No se pudo guardar: '+e.message)}finally{$('saveBtn').disabled=false}
+}
+window.saveProduct=saveProduct;
+
+function renderProducts(){
+ $('products').innerHTML=products.length?products.map((p,i)=>`<div class="prodrow"><div><b>${esc(p.name)}</b><br><span class="muted">Código: ${esc(p.code)} · $${money(p.price)} · Stock: ${p.stock}</span></div><div class="actions"><button class="secondary" onclick="showBarcodeByIndex(${i})">🏷️ Código</button><button class="secondary" onclick="loadP(${i})">Editar</button><button class="danger" onclick="delP(${i})">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay productos todavía.</div>';
+}
+window.showBarcodeByIndex=i=>showBarcode(products[i]);
+window.loadP=i=>{let p=products[i];editingId=p.id;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;$('saveBtn').textContent='💾 Guardar cambios';tab('inv');scrollTo({top:0,behavior:'smooth'})};
+window.delP=async i=>{if(!confirm('¿Eliminar este producto?'))return;try{await import('https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js').then(async m=>m.deleteDoc(doc(db,'products',products[i].id)));closeBarcode()}catch(e){alert('No se pudo eliminar: '+e.message)}};
+
+const CODE128B=['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
+function renderCode128(text){let codes=[104];for(const ch of String(text)){let n=ch.charCodeAt(0)-32;if(n<0||n>95)throw new Error('Código no compatible');codes.push(n)}let sum=104;for(let i=1;i<codes.length;i++)sum+=codes[i]*i;codes.push(sum%103,106);let bits=codes.map(c=>CODE128B[c]).join(''),module=2,h=80,quiet=10,width=quiet*2+bits.length*module,rects='',x=quiet;for(let i=0;i<bits.length;){let bit=bits[i],j=i;while(j<bits.length&&bits[j]===bit)j++;if(bit==='1')rects+=`<rect x="${x}" y="0" width="${(j-i)*module}" height="${h}" fill="#000"/>`;x+=(j-i)*module;i=j}$('barcodeSvg').setAttribute('viewBox',`0 0 ${width} ${h}`);$('barcodeSvg').setAttribute('width',width);$('barcodeSvg').setAttribute('height',h);$('barcodeSvg').innerHTML=rects}
+function showBarcode(p){if(!p)return;$('barcodeCard').classList.remove('hidden');$('barcodeLabel').textContent=p.name+' — '+p.code;try{renderCode128(p.code)}catch(e){alert('No se pudo generar el código de barras.');return}$('barcodeCard').scrollIntoView({behavior:'smooth'})}
+window.showBarcode=showBarcode;
+window.closeBarcode=()=>$('barcodeCard').classList.add('hidden');
+window.printBarcode=()=>{const svg=$('barcodeSvg').outerHTML,label=$('barcodeLabel').textContent,w=window.open('','_blank','width=500,height=400');if(!w)return;w.document.write('<!doctype html><html><head><title>Código de barras - Hilando</title><style>body{font-family:Arial;text-align:center;padding:30px}svg{max-width:100%}h3{margin-top:10px}</style></head><body>'+svg+'<h3>'+esc(label)+'</h3><script>window.onload=()=>window.print()<\\/script></body></html>');w.document.close()};
+
+function add(code){if(!code)return;const p=products.find(x=>String(x.code)===String(code));if(!p)return alert('Código no encontrado. Primero agrégalo en Inventario.');if(p.stock<1)return alert('Producto agotado.');let i=cart.find(x=>String(x.code)===String(p.code));if(i){if(i.qty>=p.stock)return alert('No hay más stock disponible.');i.qty++}else cart.push({id:p.id,code:p.code,name:p.name,price:+p.price,qty:1});renderCart()}
+function renderCart(){if(!cart.length){$('cart').innerHTML='<div class="empty">Escanea un producto para comenzar.</div>';$('total').textContent='0.00';return}$('cart').innerHTML=cart.map((x,i)=>`<div class="cartrow"><div><b>${esc(x.name)}</b><br><span class="muted">$${money(x.price)} c/u</span></div><div class="qty"><button onclick="qty(${i},-1)">−</button><b>${x.qty}</b><button onclick="qty(${i},1)">+</button><b>$${money(x.price*x.qty)}</b></div></div>`).join('');$('total').textContent=money(cart.reduce((a,x)=>a+x.price*x.qty,0))}
+window.qty=(i,d)=>{let x=cart[i],p=products.find(p=>p.id===x.id);x.qty+=d;if(x.qty<1)cart.splice(i,1);if(p&&x.qty>p.stock)x.qty=p.stock;renderCart()};
+
+async function checkout(method){
+ if(!cart.length)return alert('No hay productos en la venta.'); if(!db)return alert('Primero conecta la nube.');
+ const total=cart.reduce((a,x)=>a+x.price*x.qty,0), saleItems=cart.map(x=>({...x})), saleRef=doc(collection(db,'sales'));
+ try{
+  await runTransaction(db,async tx=>{
+    const refs=cart.map(x=>doc(db,'products',x.id)), snaps=[];
+    for(const r of refs)snaps.push(await tx.get(r));
+    snaps.forEach((snap,i)=>{if(!snap.exists())throw new Error('Un producto ya no existe.');const p=snap.data();if(Number(p.stock)<cart[i].qty)throw new Error('No hay suficiente stock de '+p.name+'.')});
+    snaps.forEach((snap,i)=>tx.update(refs[i],{stock:Number(snap.data().stock)-cart[i].qty}));
+    tx.set(saleRef,{date:new Date().toISOString(),method,total,items:saleItems});
+  });
+  cart=[];renderCart();alert('Venta registrada: $'+money(total));$('manualCode').focus();
+ }catch(e){alert('No se pudo registrar la venta: '+e.message)}
+}
+window.checkout=checkout;
+
+async function startScanner(){if(!window.Html5Qrcode)return alert('No se pudo cargar el lector de cámara.');$('readerWrap').classList.remove('hidden');scanner=new Html5Qrcode('reader');try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:160}},decoded=>{add(decoded);stopScanner()},()=>{})}catch(e){$('readerWrap').classList.add('hidden');alert('No se pudo abrir la cámara. Revisa el permiso y que el sitio use HTTPS.')}}
+async function stopScanner(){if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}$('readerWrap').classList.add('hidden')};window.startScanner=startScanner;window.stopScanner=stopScanner;
 $('manualCode').addEventListener('keydown',e=>{if(e.key==='Enter'){add(e.target.value.trim());e.target.value=''}});
 
-async function startScanner(){
- if(!window.Html5Qrcode){alert('No se pudo cargar el lector de cámara. Abre esta página con internet la primera vez.');return}
- $('readerWrap').classList.remove('hidden');
- scanner=new Html5Qrcode("reader");
- try{
-  await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},(decoded)=>{add(decoded);stopScanner()},()=>{});
- }catch(e){$('readerWrap').classList.add('hidden');alert('No se pudo abrir la cámara. Revisa el permiso de cámara y que el sitio use HTTPS.')}
-}
-async function stopScanner(){if(scanner){try{await scanner.stop()}catch(e){}try{scanner.clear()}catch(e){}scanner=null}$('readerWrap').classList.add('hidden')}
+function renderSummary(){let total=sales.reduce((a,s)=>a+Number(s.total||0),0),cash=sales.filter(s=>s.method==='Efectivo').reduce((a,s)=>a+Number(s.total||0),0),tr=sales.filter(s=>s.method==='Transferencia').reduce((a,s)=>a+Number(s.total||0),0),items=sales.reduce((a,s)=>a+(s.items||[]).reduce((b,x)=>b+Number(x.qty||0),0),0);$('sTotal').textContent=money(total);$('sCash').textContent=money(cash);$('sTrans').textContent=money(tr);$('sItems').textContent=items;$('sales').innerHTML=sales.length?sales.map(s=>`<div class="prodrow"><div><b>Venta</b><br><span class="muted">${new Date(s.date).toLocaleString()} · ${s.method}</span></div><b>$${money(s.total)}</b></div>`).join(''):'<div class="empty">Todavía no hay ventas.</div>'}
 
-function add(code){
- if(!code)return;
- const p=products.find(x=>String(x.code)===String(code));
- if(!p){alert('Código no encontrado. Primero agrégalo en Inventario.');return}
- if(p.stock<1){alert('Producto agotado.');return}
- let i=cart.find(x=>String(x.code)===String(p.code));
- if(i){if(i.qty>=p.stock){alert('No hay más stock disponible.');return}i.qty++}else cart.push({code:p.code,name:p.name,price:+p.price,qty:1});
- renderCart();
-}
-function renderCart(){
- if(!cart.length){$('cart').innerHTML='<div class="empty">Escanea un producto para comenzar.</div>';$('total').textContent='0.00';return}
- $('cart').innerHTML=cart.map((x,i)=>`<div class="cartrow"><div><b>${esc(x.name)}</b><br><span class="muted">$${money(x.price)} c/u</span></div><div class="qty"><button onclick="qty(${i},-1)">−</button><b>${x.qty}</b><button onclick="qty(${i},1)">+</button><b>$${money(x.price*x.qty)}</b></div></div>`).join('');
- $('total').textContent=money(cart.reduce((a,x)=>a+x.price*x.qty,0));
-}
-function qty(i,d){let x=cart[i],p=products.find(p=>p.code===x.code);x.qty+=d;if(x.qty<1)cart.splice(i,1);if(x.qty>p.stock)x.qty=p.stock;renderCart()}
-function checkout(method){
- if(!cart.length)return alert('No hay productos en la venta.');
- const total=cart.reduce((a,x)=>a+x.price*x.qty,0);
- cart.forEach(x=>{let p=products.find(p=>p.code===x.code);p.stock-=x.qty});
- sales.push({id:Date.now(),date:new Date().toISOString(),method,total,items:cart.map(x=>({...x}))});
- persist();cart=[];renderCart();alert('Venta registrada: $'+money(total));$('manualCode').focus()
-}
-function saveProduct(){
- let name=$('name').value.trim(),price=Number($('price').value),stock=Number($('stock').value);
- if(!name||price<0||stock<0||$('price').value===''||$('stock').value==='')return alert('Completa nombre, precio y stock.');
- let index=editingIndex;
- if(index>=0){
-   products[index].name=name;products[index].price=price;products[index].stock=stock;
- }else{
-   const code=nextCode();
-   products.push({code,name,price,stock});
-   index=products.length-1;
- }
- editingIndex=-1;
- $('name').value='';$('price').value='';$('stock').value='';
- $('saveBtn').textContent='+ Guardar y generar código';
- persist();renderProducts();showBarcode(index);
-}
-function renderProducts(){
- $('products').innerHTML=products.length?products.map((p,i)=>`<div class="prodrow"><div><b>${esc(p.name)}</b><br><span class="muted">Código: ${esc(p.code)} · $${money(p.price)} · Stock: ${p.stock}</span></div><div class="actions"><button class="secondary" onclick="showBarcode(${i})">🏷️ Código</button><button class="secondary" onclick="loadP(${i})">Editar</button><button class="danger" onclick="delP(${i})">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay productos todavía.</div>'
-}
-function showBarcode(i){
- const p=products[i];
- $('barcodeCard').classList.remove('hidden');
- $('barcodeLabel').textContent=p.name+' — '+p.code;
- if(!window.JsBarcode){alert('No se pudo cargar el generador de códigos. Abre la página con internet la primera vez.');return}
- JsBarcode('#barcodeSvg',String(p.code),{
-   format:'CODE128',displayValue:true,lineColor:'#000',background:'#fff',
-   width:2,height:80,fontSize:16,margin:10
- });
- $('barcodeCard').scrollIntoView({behavior:'smooth'});
-}
-function closeBarcode(){$('barcodeCard').classList.add('hidden')}
-function printBarcode(){
- const svg=$('barcodeSvg').outerHTML, label=$('barcodeLabel').textContent;
- const w=window.open('','_blank','width=500,height=400');
- if(!w){alert('El navegador bloqueó la ventana de impresión. Permítela para imprimir.');return}
- w.document.write('<!doctype html><html><head><title>Código de barras - Hilando</title><style>body{font-family:Arial;text-align:center;padding:30px}svg{max-width:100%}h3{margin-top:10px}</style></head><body>'+svg+'<h3>'+esc(label)+'</h3><script>window.onload=()=>window.print()<\\/script></body></html>');
- w.document.close();
-}
+async function importLocal(){if(!db)return alert('Primero conecta la nube.');if(!localProducts.length&&!localSales.length)return alert('Este dispositivo no tiene datos locales para importar.');if(!confirm('Esto copiará los productos y ventas de ESTA computadora a la nube. Hazlo solo una vez para evitar duplicados.'))return;try{for(const p of localProducts){const id=String(p.code||await nextCodeCloud());await setDoc(doc(db,'products',id),{name:p.name,price:Number(p.price),stock:Number(p.stock),code:String(p.code||id)},{merge:true})}for(const s of localSales){await setDoc(doc(db,'sales','local_'+s.id),s,{merge:true})}alert('Datos locales enviados a la nube. Ahora aparecerán en los demás dispositivos.')}catch(e){alert('No se pudo importar: '+e.message)}}
+window.importLocal=importLocal;
 
-function loadP(i){let p=products[i];editingIndex=i;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;$('saveBtn').textContent='💾 Guardar cambios';tab('inv');scrollTo({top:0,behavior:'smooth'})}
-function delP(i){if(confirm('¿Eliminar este producto?')){products.splice(i,1);persist();renderProducts();closeBarcode()}}
-function renderSummary(){
- let total=sales.reduce((a,s)=>a+s.total,0),cash=sales.filter(s=>s.method==='Efectivo').reduce((a,s)=>a+s.total,0),tr=sales.filter(s=>s.method==='Transferencia').reduce((a,s)=>a+s.total,0),items=sales.reduce((a,s)=>a+s.items.reduce((b,x)=>b+x.qty,0),0);
- $('sTotal').textContent=money(total);$('sCash').textContent=money(cash);$('sTrans').textContent=money(tr);$('sItems').textContent=items;
- $('sales').innerHTML=sales.length?sales.slice().reverse().map(s=>`<div class="prodrow"><div><b>#${s.id}</b><br><span class="muted">${new Date(s.date).toLocaleString()} · ${s.method}</span></div><b>$${money(s.total)}</b></div>`).join(''):'<div class="empty">Todavía no hay ventas.</div>'
-}
-function backup(){let blob=new Blob([JSON.stringify({products,sales,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='hilando-respaldo.json';a.click();URL.revokeObjectURL(a.href)}
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function backup(){let blob=new Blob([JSON.stringify({products,sales,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='hilando-respaldo-nube.json';a.click();URL.revokeObjectURL(a.href)}
 setInterval(()=>{$('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})},1000);
-renderCart();renderProducts();
+renderCart();renderProducts();renderSummary();startCloud();
 </script>
 </body>
 </html>
