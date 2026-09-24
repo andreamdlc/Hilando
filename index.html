@@ -68,7 +68,12 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 <div style="margin-top:10px;padding:11px;border-radius:10px;background:#fff5f9;border:1px dashed #e88bb4">🏷️ <b>El código de barras se genera automáticamente.</b><br><span class="muted">Tú solo pones nombre, precio y cantidad.</span></div>
 <button id="saveBtn" class="big camera" style="margin-top:10px" onclick="saveProduct()">+ Guardar y generar código</button>
 </div>
-<div class="card"><h2>Productos</h2><div id="products"></div></div>
+<div class="card">
+<h2>Productos</h2>
+<div style="padding:11px;border-radius:10px;background:#fff5f9;border:1px dashed #e88bb4;margin-bottom:10px">🏷️ <b>Imprimir todas las etiquetas</b><br><span class="muted">Genera un PDF con una etiqueta por cada pieza que tengas en stock.</span></div>
+<button class="big camera" onclick="printAllLabels()">🖨️ Imprimir todas las etiquetas</button>
+<div id="products" style="margin-top:10px"></div>
+</div>
 <div id="barcodeCard" class="card hidden">
   <h2>🏷️ Código de barras</h2>
   <div style="text-align:center;background:#fff;padding:10px">
@@ -94,6 +99,7 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
@@ -195,6 +201,71 @@ function renderProducts(){
 window.showBarcodeByIndex=i=>showBarcode(products[i]);
 window.loadP=i=>{let p=products[i];editingId=p.id;$('name').value=p.name;$('price').value=p.price;$('stock').value=p.stock;$('saveBtn').textContent='💾 Guardar cambios';tab('inv');scrollTo({top:0,behavior:'smooth'})};
 window.delP=async i=>{if(!confirm('¿Eliminar este producto?'))return;try{await import('https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js').then(async m=>m.deleteDoc(doc(db,'products',products[i].id)));closeBarcode()}catch(e){alert('No se pudo eliminar: '+e.message)}};
+
+async function printAllLabels(){
+  if(!products.length){alert('No hay productos en el inventario.');return;}
+  if(!window.jspdf || !window.JsBarcode){alert('Necesitas conexión a internet la primera vez para generar el PDF.');return;}
+  const items=[];
+  products.forEach(p=>{
+    const qty=Math.max(0,Math.floor(Number(p.stock)||0));
+    for(let i=0;i<qty;i++) items.push(p);
+  });
+  if(!items.length){alert('No hay piezas en stock para generar etiquetas.');return;}
+
+  const {jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const pageW=210,pageH=297;
+  // Etiquetas compactas: 47 x 28 mm. El código de barras mide exactamente 40 mm de ancho.
+  const marginX=5,marginY=5,gapX=3,gapY=3;
+  const cols=4,rows=9;
+  const labelW=(pageW-marginX*2-gapX*(cols-1))/cols;
+  const labelH=(pageH-marginY*2-gapY*(rows-1))/rows;
+  const barcodeW=40, barcodeH=12;
+
+  const canvas=document.createElement('canvas');
+  canvas.width=800;canvas.height=240;
+  const barcodeData={};
+  for(const p of products){
+    try{
+      JsBarcode(canvas,String(p.code),{
+        format:'CODE128',displayValue:false,lineColor:'#000',background:'#fff',
+        width:3,height:120,fontSize:1,margin:8
+      });
+      barcodeData[p.id||p.code]=canvas.toDataURL('image/png');
+    }catch(e){console.error('barcode',p,e)}
+  }
+
+  items.forEach((p,idx)=>{
+    if(idx>0 && idx%(cols*rows)===0) pdf.addPage();
+    const pos=idx%(cols*rows),col=pos%cols,row=Math.floor(pos/cols);
+    const x=marginX+col*(labelW+gapX), y=marginY+row*(labelH+gapY);
+
+    pdf.setDrawColor(215,215,215);
+    pdf.roundedRect(x,y,labelW,labelH,1.5,1.5,'S');
+
+    // Nombre del producto
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(7.5);
+    let name=String(p.name||'Producto');
+    if(name.length>22) name=name.slice(0,21)+'…';
+    pdf.text(name,x+labelW/2,y+5,{align:'center',maxWidth:labelW-4});
+
+    // Código de barras de 4 cm, centrado
+    const img=barcodeData[p.id||p.code];
+    if(img){
+      const bx=x+(labelW-barcodeW)/2;
+      pdf.addImage(img,'PNG',bx,y+7,barcodeW,barcodeH);
+    }
+
+    // Número del código debajo
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(7.5);
+    pdf.text(String(p.code),x+labelW/2,y+labelH-4,{align:'center'});
+  });
+
+  pdf.save('Hilando_etiquetas.pdf');
+}
+window.printAllLabels=printAllLabels;
 
 function showBarcode(p){
   if(!p)return;
