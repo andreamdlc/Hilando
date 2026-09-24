@@ -40,7 +40,7 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 </nav>
 
 <main>
-<div class="card" style="margin-bottom:13px"><div id="cloudStatus" style="padding:11px;border-radius:10px;border:1px dashed #e88bb4;background:#fff5f9;font-weight:800">☁️ Conectando con la nube...</div><div id="setupHelp" class="hidden" style="margin-top:10px"><b>Falta el paso de conexión.</b><br><span class="muted">Necesitamos conectar Hilando a una base de datos para que computadora, tablet y teléfonos compartan el mismo inventario.</span></div></div>
+<div class="card" style="margin-bottom:13px"><div id="cloudStatus" style="padding:11px;border-radius:10px;border:1px dashed #e88bb4;background:#fff5f9;font-weight:800">☁️ Conectando con Hilando en la nube...</div><div id="setupHelp" class="hidden" style="margin-top:10px"><b>Falta el paso de conexión.</b><br><span class="muted">Necesitamos conectar Hilando a una base de datos para que computadora, tablet y teléfonos compartan el mismo inventario.</span></div></div>
 <section id="sale">
 <div class="card">
 <h2>Escanear producto</h2>
@@ -93,7 +93,6 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 </main>
 
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
@@ -101,16 +100,17 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, onSnaps
 
 /* ============================================================
    HILANDO POS - VERSION NUBE
-   UNA SOLA CONFIGURACION PARA TODOS LOS DISPOSITIVOS.
-   Reemplaza los valores de FIREBASE_CONFIG con los de tu proyecto.
+   Conectado al proyecto Firebase de Hilando.
+   Los productos, stock y ventas se comparten entre dispositivos.
    ============================================================ */
 const FIREBASE_CONFIG = {
-  apiKey: "PON_AQUI_API_KEY",
-  authDomain: "PON_AQUI_PROJECT_ID.firebaseapp.com",
-  projectId: "PON_AQUI_PROJECT_ID",
-  storageBucket: "PON_AQUI_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "PON_AQUI_SENDER_ID",
-  appId: "PON_AQUI_APP_ID"
+  apiKey: "AIzaSyBap8SaUD3-02NeeSDzAc6ylRQ1wlcghpI",
+  authDomain: "hilando-7bb5f.firebaseapp.com",
+  projectId: "hilando-7bb5f",
+  storageBucket: "hilando-7bb5f.firebasestorage.app",
+  messagingSenderId: "915725996733",
+  appId: "1:915725996733:web:346ed3a82e1f1f72a5ddd4",
+  measurementId: "G-9CXS1LJX2F"
 };
 
 const isConfigured = FIREBASE_CONFIG.apiKey !== "PON_AQUI_API_KEY" && FIREBASE_CONFIG.projectId !== "PON_AQUI_PROJECT_ID";
