@@ -71,8 +71,8 @@ button{cursor:pointer}.big{width:100%;padding:14px;border:0;border-radius:11px;f
 <div class="card">
 <h2>Productos</h2>
 <div style="padding:11px;border-radius:10px;background:#fff5f9;border:1px dashed #e88bb4;margin-bottom:10px">🏷️ <b>Imprimir todas las etiquetas</b><br><span class="muted">Genera un PDF con 1 etiqueta por cada producto del inventario.</span></div>
-<button class="big camera" onclick="printAllLabels()">🖨️ Imprimir códigos (1 por producto)</button>
-<button class="big secondary" style="margin-top:8px" onclick="printInventorySheet()">📋 Imprimir control de inventario</button>
+<button class="big camera" onclick="printAllLabels()">🏷️ Inventario de etiquetas (1 por producto)</button>
+<button class="big secondary" style="margin-top:8px" onclick="printInventorySheet()">📋 Inventario de ventas (lista)</button>
 <div id="products" style="margin-top:10px"></div>
 </div>
 <div id="barcodeCard" class="card hidden">
@@ -260,71 +260,80 @@ function printInventorySheet(){
   if(!window.jspdf){alert('Necesitas conexión a internet la primera vez para generar el PDF.');return;}
 
   const {jsPDF}=window.jspdf;
-  // Una columna por pieza en existencia. Se acomodan 5 columnas por fila.
-  const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
-  const pageW=297,pageH=210;
-  const margin=8,gap=3,cols=5;
-  const cardW=(pageW-margin*2-gap*(cols-1))/cols;
-  const cardH=43;
-  let x=margin,y=margin;
-  let countOnPage=0;
-  const perPage=20;
+  const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const pageW=210,pageH=297;
+  const margin=10;
+  const tableX=margin;
+  const tableW=pageW-margin*2;
+  const headerH=10;
+  const rowH=8;
+  const cols=[38,24,24,52,52];
+  const headers=['Producto','Precio','Cantidad','Pago','Notas'];
+  let y=22;
+  let rowCount=0;
 
-  const newPage=()=>{
+  function drawHeader(){
+    pdf.setFillColor(255,235,244);
+    pdf.setDrawColor(210,150,175);
+    let x=tableX;
+    headers.forEach((h,i)=>{
+      pdf.rect(x,y,cols[i],headerH,'FD');
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(8.5);
+      pdf.text(h,x+cols[i]/2,y+6.5,{align:'center'});
+      x+=cols[i];
+    });
+    y+=headerH;
+  }
+
+  function newPage(){
     pdf.addPage();
-    x=margin;y=margin;countOnPage=0;
-  };
+    y=18;
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(14);
+    pdf.text('Hilando — Control de inventario / ventas',pageW/2,10,{align:'center'});
+    drawHeader();
+    rowCount=0;
+  }
+
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(16);
+  pdf.text('Hilando — Control de inventario / ventas',pageW/2,10,{align:'center'});
+  drawHeader();
 
   for(const p of products){
     const qty=Math.max(0,Math.floor(Number(p.stock)||0));
     for(let n=1;n<=qty;n++){
-      if(countOnPage>=perPage) newPage();
-      pdf.setDrawColor(180,180,180);
-      pdf.roundedRect(x,y,cardW,cardH,2,2,'S');
-
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(8);
-      pdf.text('PRODUCTO',x+3,y+6);
-      pdf.setFont('helvetica','normal');
-      pdf.setFontSize(9);
-      let name=String(p.name||'Producto');
-      if(name.length>22) name=name.slice(0,21)+'…';
-      pdf.text(name,x+3,y+12,{maxWidth:cardW-6});
-
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(8);
-      pdf.text('PRECIO',x+3,y+19);
-      pdf.setFont('helvetica','normal');
-      pdf.setFontSize(10);
-      pdf.text('$'+money(p.price),x+3,y+25);
-
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(8);
-      pdf.text('CANTIDAD',x+3,y+32);
-      pdf.setFont('helvetica','normal');
-      pdf.setFontSize(10);
-      pdf.text('1',x+3,y+38);
-
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(8);
-      pdf.text('PAGO',x+cardW-3,y+19,{align:'right'});
+      if(y+rowH>pageH-12) newPage();
+      const values=[String(p.name||'Producto'),'$'+money(p.price),'1','☐ Efectivo   ☐ Transferencia',''];
+      let x=tableX;
       pdf.setFont('helvetica','normal');
       pdf.setFontSize(8);
-      pdf.rect(x+cardW-30,y+23,4,4);
-      pdf.text('Efectivo',x+cardW-24,y+27);
-      pdf.rect(x+cardW-30,y+31,4,4);
-      pdf.text('Transferencia',x+cardW-24,y+35);
-
-      pdf.setFontSize(6.5);
-      pdf.text((n)+'/'+qty,x+cardW-3,y+41,{align:'right'});
-
-      countOnPage++;
-      x+=cardW+gap;
-      if(countOnPage%cols===0){x=margin;y+=cardH+gap;}
+      values.forEach((v,i)=>{
+        pdf.setDrawColor(215,170,190);
+        pdf.rect(x,y,cols[i],rowH,'S');
+        if(i===3){
+          pdf.text('☐ Efectivo',x+3,y+5.2);
+          pdf.text('☐ Transferencia',x+25,y+5.2);
+        }else{
+          let text=String(v);
+          if(i===0 && text.length>25) text=text.slice(0,24)+'…';
+          pdf.text(text,x+(i===0?3:cols[i]/2),y+5.2,{align:i===0?'left':'center',maxWidth:cols[i]-5});
+        }
+        x+=cols[i];
+      });
+      y+=rowH;
+      rowCount++;
     }
   }
 
-  pdf.save('Hilando_control_inventario.pdf');
+  if(rowCount===0){
+    pdf.setFont('helvetica','normal');
+    pdf.setFontSize(10);
+    pdf.text('No hay piezas disponibles en stock.',pageW/2,y+10,{align:'center'});
+  }
+
+  pdf.save('Hilando_inventario_ventas_lista.pdf');
 }
 window.printInventorySheet=printInventorySheet;
 
