@@ -261,78 +261,69 @@ function printInventorySheet(){
 
   const {jsPDF}=window.jspdf;
   const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-  const pageW=210,pageH=297;
-  const margin=10;
-  const tableX=margin;
-  const tableW=pageW-margin*2;
-  const headerH=10;
-  const rowH=8;
-  const cols=[38,24,24,52,52];
-  const headers=['Producto','Precio','Cantidad','Pago','Notas'];
+  const pageW=210,pageH=297, margin=10;
+  const tableX=margin, tableW=pageW-margin*2;
+  const headers=['Producto','Precio','Piezas','Pago','Notas'];
+  const cols=[43,25,62,42,28];
+  const headerH=10,rowH=15;
   let y=22;
-  let rowCount=0;
 
+  function title(){
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(15);
+    pdf.text('Hilando — Control de inventario / ventas',pageW/2,10,{align:'center'});
+  }
   function drawHeader(){
-    pdf.setFillColor(255,235,244);
-    pdf.setDrawColor(210,150,175);
+    pdf.setFillColor(255,235,244); pdf.setDrawColor(210,150,175);
     let x=tableX;
     headers.forEach((h,i)=>{
       pdf.rect(x,y,cols[i],headerH,'FD');
-      pdf.setFont('helvetica','bold');
-      pdf.setFontSize(8.5);
-      pdf.text(h,x+cols[i]/2,y+6.5,{align:'center'});
-      x+=cols[i];
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(8.5);
+      pdf.text(h,x+cols[i]/2,y+6.5,{align:'center'}); x+=cols[i];
     });
     y+=headerH;
   }
-
-  function newPage(){
-    pdf.addPage();
-    y=18;
-    pdf.setFont('helvetica','bold');
-    pdf.setFontSize(14);
-    pdf.text('Hilando — Control de inventario / ventas',pageW/2,10,{align:'center'});
-    drawHeader();
-    rowCount=0;
-  }
-
-  pdf.setFont('helvetica','bold');
-  pdf.setFontSize(16);
-  pdf.text('Hilando — Control de inventario / ventas',pageW/2,10,{align:'center'});
-  drawHeader();
-
-  for(const p of products){
-    const qty=Math.max(0,Math.floor(Number(p.stock)||0));
-    for(let n=1;n<=qty;n++){
-      if(y+rowH>pageH-12) newPage();
-      const values=[String(p.name||'Producto'),'$'+money(p.price),'1','☐ Efectivo   ☐ Transferencia',''];
-      let x=tableX;
-      pdf.setFont('helvetica','normal');
-      pdf.setFontSize(8);
-      values.forEach((v,i)=>{
-        pdf.setDrawColor(215,170,190);
-        pdf.rect(x,y,cols[i],rowH,'S');
-        if(i===3){
-          pdf.text('☐ Efectivo',x+3,y+5.2);
-          pdf.text('☐ Transferencia',x+25,y+5.2);
-        }else{
-          let text=String(v);
-          if(i===0 && text.length>25) text=text.slice(0,24)+'…';
-          pdf.text(text,x+(i===0?3:cols[i]/2),y+5.2,{align:i===0?'left':'center',maxWidth:cols[i]-5});
-        }
-        x+=cols[i];
-      });
-      y+=rowH;
-      rowCount++;
+  function drawPieceBoxes(x,y0,w,qty){
+    const maxPerLine=10, box=5.2, gap=1.1;
+    const shown=Math.min(qty,40);
+    for(let i=0;i<shown;i++){
+      const col=i%maxPerLine, row=Math.floor(i/maxPerLine);
+      const bx=x+2+col*(box+gap), by=y0+2+row*(box+1.2);
+      pdf.setDrawColor(160,160,160); pdf.rect(bx,by,box,box,'S');
     }
+    if(qty>40){ pdf.setFont('helvetica','normal'); pdf.setFontSize(7); pdf.text('+ '+(qty-40),x+w-8,y0+10,{align:'right'}); }
+  }
+  function drawPayment(x,y0,w){
+    // Money icon: small bill with $ symbol
+    pdf.setDrawColor(80,150,90); pdf.rect(x+3,y0+3,8,5,'S');
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(7); pdf.text('$',x+7,y0+6.7,{align:'center'});
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(7.5); pdf.text('☐ Efectivo',x+13,y0+7);
+    // Card icon
+    pdf.setDrawColor(70,100,170); pdf.rect(x+3,y0+9,8,4,'S'); pdf.line(x+3,y0+10.5,x+11,y0+10.5);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(7.5); pdf.text('☐ Transferencia',x+13,y0+12.2);
   }
 
-  if(rowCount===0){
-    pdf.setFont('helvetica','normal');
-    pdf.setFontSize(10);
-    pdf.text('No hay piezas disponibles en stock.',pageW/2,y+10,{align:'center'});
+  title(); drawHeader();
+  let rows=0;
+  for(const p of products){
+    if(y+rowH>pageH-12){ pdf.addPage(); y=18; title(); drawHeader(); }
+    const qty=Math.max(0,Math.floor(Number(p.stock)||0));
+    let x=tableX;
+    pdf.setDrawColor(215,170,190);
+    [43,25,62,42,28].forEach(w=>{pdf.rect(x,y,w,rowH,'S'); x+=w;});
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(8.5);
+    let name=String(p.name||'Producto'); if(name.length>22) name=name.slice(0,21)+'…';
+    pdf.text(name,tableX+3,y+6.5,{maxWidth:37});
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(8.5);
+    pdf.text('$'+money(p.price),tableX+43+12.5,y+8,{align:'center'});
+    drawPieceBoxes(tableX+68,y,62,qty);
+    drawPayment(tableX+130,y,42);
+    // blank notes area
+    y+=rowH; rows++;
   }
-
+  if(!rows){
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(10);
+    pdf.text('No hay productos en el inventario.',pageW/2,y+10,{align:'center'});
+  }
   pdf.save('Hilando_inventario_ventas_lista.pdf');
 }
 window.printInventorySheet=printInventorySheet;
